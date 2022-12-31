@@ -28,6 +28,12 @@ from modules.processing import Processed, process_images
 from modules.shared import opts, cmd_opts, OptionInfo, hide_dirs, state
 import modules.shared as shared
 
+import modules.modelloader
+import modules.sd_models
+
+checkpoints_list = modules.sd_models.checkpoints_list
+CheckpointInfo = modules.sd_models.CheckpointInfo
+
 if '__file__' in locals().keys():
     root_path = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
     root_path = os.path.abspath(os.path.join(root_path, os.path.pardir))
@@ -42,16 +48,17 @@ except:
 OUTPATH_SAMPLES = os.path.join(root_path, 'extensions', extension_name, 'assets', 'preview')
 OUTPATH_GRIDS =  os.path.join(root_path, 'extensions', extension_name, 'assets', 'grid')
 
-BATCH_SIZE = 2
-N_ITER = 2
-STEPS = 30
+BATCH_SIZE = 1
+N_ITER = 3
+STEPS = 20
 CFG_SCALE = 11.5
 WIDTH = 512
-HEIGHT = 768
+HEIGHT = 512
 SAMPLER_INDEX = 1
-RESTORE_FACE = 'true'
+RESTORE_FACE = 'false'
 TILING = 'false'
 DO_NOT_SAVE_GRID = 'false'
+SD_MODEL_HASH = "3e16efc8" # add a default model if you like or set it in params
 
 EXCLUDED_TAGS = ['']
 global SKIP_EXISTS
@@ -169,7 +176,7 @@ map_keys = {
     "negative": "negative_prompt"}
 
 map_param = {
-    "sd_model": "sd_model",
+    "sd_model_hash": "sd_model_hash",
     "outpath_samples": "outpath_samples",
     "outpath_grids": "outpath_grids",
     "prompt_for_display": "prompt_for_display",
@@ -189,7 +196,8 @@ map_param = {
     "restore_faces": "restore_faces",
     "tiling": "tiling",
     "do_not_save_samples": "do_not_save_samples",
-    "do_not_save_grid": "do_not_save_grid"}
+    "do_not_save_grid": "do_not_save_grid",
+    }
 
 def process_string_tag(tag):
     return tag
@@ -208,7 +216,7 @@ def process_boolean_tag(tag):
 
 
 prompt_tags = {
-    "sd_model": None,
+    "sd_model_hash": process_string_tag,
     "outpath_samples": process_string_tag,
     "outpath_grids": process_string_tag,
     "prompt_for_display": process_string_tag,
@@ -293,7 +301,7 @@ def parse_param(param_str):
     # m_tiling = TILING
     m_restore_faces = RESTORE_FACE
     m_do_not_save_grid = DO_NOT_SAVE_GRID
-    # m_sd_model = sd_model
+    m_sd_model_hash = SD_MODEL_HASH
     cur_line = ""
     for item in param_str.split(', '):
         if item == '':
@@ -317,8 +325,8 @@ def parse_param(param_str):
             cur_line = add_param("subseed_strength", value, cur_line)   
         elif key == 'Variation seed':
             cur_line = add_param("subseed", value, cur_line)   
-        # elif key == 'Model hash':
-        #     cur_line = add_param("sd_model", m_sd_model, cur_line)   
+        elif key == 'sd_model_hash':
+            cur_line = add_param("sd_model_hash", value, cur_line)   
     cur_line = add_param("batch_size", m_batch_size, cur_line)
     cur_line = add_param("n_iter", m_n_iter, cur_line)
     cur_line = add_param("steps", m_steps, cur_line)
@@ -475,6 +483,11 @@ def load_avartar(avatar_dict, customize_tags_positive):
     avatars = yaml.load(avatar_dict, yaml.BaseLoader)
 
     for name, prompt in avatars.items():
+        # TODO find a way to not have avatar names repeat in the dropdown 
+        #      if you reload the yaml file. This happens if you want to update
+        #      your avatars after making changes.
+        # TODO add an option to replace avatars rather than only add
+        
         avatar_names.append(name)
         if 'value' in prompt.keys():
             avatar_prompts.append(customize_tags_positive + ', ' +  prompt['value'])
@@ -687,6 +700,28 @@ class Script(scripts.Script):
 
             copy_p = copy.copy(p)
             for k, v in args.items():
+                # loads the model if it exists
+                if k =="sd_model_hash":
+                    modules.sd_models.list_models()
+                    for checkpoint in checkpoints_list.values():
+                        # Definition: CheckpointInfo = namedtuple("CheckpointInfo", ['filename', 'title', 'hash', 'model_name', 'config'])
+                        ckpt = checkpoint.filename
+                        title = checkpoint.title
+                        h = checkpoint.hash
+                        model_name = checkpoint.model_name
+                        config = checkpoint.config
+                        if v in title:
+                            if not os.path.exists(config):
+                                basename, _ = os.path.splitext(ckpt)
+                                config = basename + ".yaml"
+                                if not os.path.exists(config):
+                                    config = shared.cmd_opts.config
+                            # have to create new tuple because tuples are immutable
+                            model = CheckpointInfo(ckpt, title, h, model_name, config)
+                            # print(f"original checkpoint: {checkpoint}")
+                            # print(f"new checkpoint: {model}")
+                            modules.sd_models.load_model(model)
+
                 setattr(copy_p, k, v)
 
             proc = process_images(copy_p)
